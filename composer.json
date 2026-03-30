@@ -1,0 +1,50 @@
+{
+    "name": "mhpdigital/cross-tenant-security-bundle",
+    "description": "Symfony bundle for role-based, row-level tenant isolation in Doctrine repositories",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jochen",
+            "email": "jd@managedhosting.partners",
+            "homepage": "https://github.com/mhpdigital"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "symfony/framework-bundle": "^6.4 || ^7.0",
+        "symfony/security-bundle": "^6.4 || ^7.0",
+        "doctrine/orm": "^2.17 || ^3.0",
+        "doctrine/doctrine-bundle": "^2.11"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "symfony/phpunit-bridge": "^7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Mhpdigital\\CrossTenantSecurity\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Mhpdigital\\CrossTenantSecurity\\Tests\\": "tests/"
+        }
+    },
+    "keywords": [
+        "symfony",
+        "bundle",
+        "doctrine",
+        "multi-tenant",
+        "saas",
+        "row-level-security",
+        "repository",
+        "security",
+        "tenancy"
+    ],
+    "extra": {
+        "symfony": {
+            "require": "^6.4 || ^7.0"
+        }
+    }
+}

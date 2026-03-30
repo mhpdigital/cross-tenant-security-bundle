@@ -1,0 +1,10 @@
+services:
+    Mhpdigital\CrossTenantSecurity\Repository\CrossTenantRepositoryFactory:
+        arguments:
+            $doctrine: '@doctrine'
+            $tokenStorage: '@security.token_storage'
+            $roleHierarchy: '@security.role_hierarchy'
+
+    Mhpdigital\CrossTenantSecurity\Request\CrossTenantEntityValueResolver:
+        tags:
+            - { name: controller.argument_value_resolver, priority: 115 }

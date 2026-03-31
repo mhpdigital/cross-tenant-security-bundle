@@ -18,18 +18,31 @@ class CrossTenantRepositoryPass implements CompilerPassInterface
                 continue;
             }
 
-            if (!$this->usesCrossTenantTrait($class)) {
+            if ($this->usesCrossTenantTrait($class)) {
+                $entityClass = $this->resolveEntityClass($class);
+
+                if (!class_exists($entityClass)) {
+                    continue;
+                }
+
+                $definition->setFactory([new Reference('doctrine.orm.entity_manager'), 'getRepository']);
+                $definition->setArguments([$entityClass]);
+
                 continue;
             }
 
-            $entityClass = $this->resolveEntityClass($class);
-
-            if (!class_exists($entityClass)) {
+            if (!is_subclass_of($class, \Doctrine\ORM\EntityRepository::class)) {
                 continue;
             }
 
-            $definition->setFactory([new Reference('doctrine.orm.entity_manager'), 'getRepository']);
-            $definition->setArguments([$entityClass]);
+            if (!str_contains($class, '\\Repository\\')) {
+                continue;
+            }
+
+            throw new \RuntimeException(sprintf(
+                'Repository "%s" has no security declaration. Add one of: CrossTenantRepository, OpenAccessRepository, or AdminOnlyAccessRepository from mhpdigital/cross-tenant-security-bundle.',
+                $class
+            ));
         }
     }
 

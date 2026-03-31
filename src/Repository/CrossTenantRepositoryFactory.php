@@ -37,7 +37,7 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
         $repositoryClassName = $metadata->customRepositoryClassName
             ?: $entityManager->getConfiguration()->getDefaultRepositoryClassName();
 
-        $repo = new $repositoryClassName($entityManager, $metadata);
+        $repo = new $repositoryClassName($this->doctrine, $entityName);
 
         if (method_exists($repo, 'setTokenStorage')) {
             $repo->setTokenStorage($this->tokenStorage);

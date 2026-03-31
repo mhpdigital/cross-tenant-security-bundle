@@ -51,10 +51,19 @@ class CrossTenantRepositoryPass implements CompilerPassInterface
         $traits = [];
         $c = $class;
         do {
-            $traits += class_uses($c) ?: [];
+            $traits += $this->collectTraitsRecursive($c);
         } while ($c = get_parent_class($c));
 
         return isset($traits[CrossTenantRepository::class]);
+    }
+
+    private function collectTraitsRecursive(string $classOrTrait): array
+    {
+        $traits = class_uses($classOrTrait) ?: [];
+        foreach ($traits as $trait) {
+            $traits += $this->collectTraitsRecursive($trait);
+        }
+        return $traits;
     }
 
     /**

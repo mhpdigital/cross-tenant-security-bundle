@@ -12,7 +12,7 @@ trait OpenAccessRepository
 {
     use CrossTenantRepository;
 
-    public function createQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder
+    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
         $em = $this->getEntityManager();
 

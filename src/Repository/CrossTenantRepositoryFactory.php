@@ -19,7 +19,7 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
         protected RoleHierarchyInterface $roleHierarchy,
     ) {}
 
-    public function getRepository(EntityManagerInterface $entityManager, string $entityName): EntityRepository
+    public function getRepository(EntityManagerInterface $entityManager, $entityName): EntityRepository
     {
         $repositoryHash = $entityManager->getClassMetadata($entityName)->getName()
             . spl_object_hash($entityManager);
@@ -37,7 +37,7 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
         $repositoryClassName = $metadata->customRepositoryClassName
             ?: $entityManager->getConfiguration()->getDefaultRepositoryClassName();
 
-        $repo = new $repositoryClassName($this->doctrine);
+        $repo = new $repositoryClassName($this->doctrine, $entityName);
 
         if (method_exists($repo, 'setTokenStorage')) {
             $repo->setTokenStorage($this->tokenStorage);

@@ -61,9 +61,18 @@ class CrossTenantEntityValueResolver implements ValueResolverInterface
         $traits = [];
         $class = get_class($repo);
         do {
-            $traits += class_uses($class) ?: [];
+            $traits += $this->collectTraitsRecursive($class);
         } while ($class = get_parent_class($class));
 
         return isset($traits[CrossTenantRepository::class]);
+    }
+
+    private function collectTraitsRecursive(string $classOrTrait): array
+    {
+        $traits = class_uses($classOrTrait) ?: [];
+        foreach ($traits as $trait) {
+            $traits += $this->collectTraitsRecursive($trait);
+        }
+        return $traits;
     }
 }

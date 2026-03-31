@@ -6,5 +6,7 @@ services:
             $roleHierarchy: '@security.role_hierarchy'
 
     Mhpdigital\CrossTenantSecurity\Request\CrossTenantEntityValueResolver:
+        arguments:
+            $em: '@doctrine.orm.entity_manager'
         tags:
             - { name: controller.argument_value_resolver, priority: 115 }

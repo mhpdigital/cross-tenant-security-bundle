@@ -19,7 +19,7 @@ trait AdminOnlyAccessRepository
             ->select($alias)
             ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
 
-        if (php_sapi_name() === 'cli') {
+        if ($this->isCli()) {
             return $qb;
         }
 
@@ -28,5 +28,10 @@ trait AdminOnlyAccessRepository
         }
 
         return $qb;
+    }
+
+    protected function isCli(): bool
+    {
+        return php_sapi_name() === 'cli';
     }
 }

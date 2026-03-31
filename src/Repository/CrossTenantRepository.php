@@ -107,7 +107,7 @@ trait CrossTenantRepository
      * The 'sec' alias prefix is defined in $securityAliasPrefix and can be overridden
      * per-repository if it collides with an alias your query already uses.
      */
-    public function createQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder
+    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
         $em = $this->getEntityManager();
         $qb = $em->createQueryBuilder()
@@ -121,7 +121,7 @@ trait CrossTenantRepository
         return $qb;
     }
 
-    public function createUnrestrictedQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder
+    public function createUnrestrictedQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
         return parent::createQueryBuilder($alias, $indexBy);
     }

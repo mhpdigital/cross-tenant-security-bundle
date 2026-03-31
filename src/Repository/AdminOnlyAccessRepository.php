@@ -19,10 +19,6 @@ trait AdminOnlyAccessRepository
             ->select($alias)
             ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
 
-        if (php_sapi_name() === 'cli') {
-            return $qb;
-        }
-
         if ($this->getHighestRole() !== 'ROLE_SUPER_ADMIN') {
             $qb->where('1=0');
         }

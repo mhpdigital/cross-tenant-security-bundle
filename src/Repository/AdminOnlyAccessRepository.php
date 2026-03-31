@@ -12,16 +12,12 @@ trait AdminOnlyAccessRepository
 {
     use CrossTenantRepository;
 
-    public function createQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder
+    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
         $em = $this->getEntityManager();
         $qb = $em->createQueryBuilder()
             ->select($alias)
             ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
-
-        if (php_sapi_name() === 'cli') {
-            return $qb;
-        }
 
         if ($this->getHighestRole() !== 'ROLE_SUPER_ADMIN') {
             $qb->where('1=0');

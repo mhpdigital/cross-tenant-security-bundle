@@ -107,7 +107,7 @@ trait CrossTenantRepository
      * The 'sec' alias prefix is defined in $securityAliasPrefix and can be overridden
      * per-repository if it collides with an alias your query already uses.
      */
-    public function createQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder
+    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
         $em = $this->getEntityManager();
         $qb = $em->createQueryBuilder()
@@ -119,6 +119,48 @@ trait CrossTenantRepository
         }
 
         return $qb;
+    }
+
+    public function findAll(): array
+    {
+        return $this->findBy([]);
+    }
+
+    public function findBy(array $criteria, ?array $orderBy = null, $limit = null, $offset = null): array
+    {
+        $alias = '_e';
+        $qb = $this->createQueryBuilder($alias);
+
+        foreach ($criteria as $field => $value) {
+            $param = '_c_' . $field;
+            if ($value === null) {
+                $qb->andWhere("$alias.$field IS NULL");
+            } else {
+                $qb->andWhere("$alias.$field = :$param")->setParameter($param, $value);
+            }
+        }
+
+        if ($orderBy) {
+            foreach ($orderBy as $field => $dir) {
+                $qb->addOrderBy("$alias.$field", $dir);
+            }
+        }
+
+        if ($limit !== null) {
+            $qb->setMaxResults($limit);
+        }
+
+        if ($offset !== null) {
+            $qb->setFirstResult($offset);
+        }
+
+        return $qb->getQuery()->getResult();
+    }
+
+    public function findOneBy(array $criteria, ?array $orderBy = null): ?object
+    {
+        $results = $this->findBy($criteria, $orderBy, 1);
+        return $results[0] ?? null;
     }
 
     public function createUnrestrictedQueryBuilder(string $alias, ?string $indexBy = null): QueryBuilder

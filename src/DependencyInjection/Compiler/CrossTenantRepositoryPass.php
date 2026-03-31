@@ -14,7 +14,14 @@ class CrossTenantRepositoryPass implements CompilerPassInterface
         foreach ($container->getDefinitions() as $definition) {
             $class = $definition->getClass();
 
-            if ($class === null || !class_exists($class)) {
+            try {
+                if ($class === null || !class_exists($class)) {
+                    continue;
+                }
+            } catch (\Throwable) {
+                // class_exists() can trigger autoloading that fails when a class
+                // file exists but its dependencies are not installed (e.g. optional
+                // Symfony components). Treat as "class not available" and skip.
                 continue;
             }
 

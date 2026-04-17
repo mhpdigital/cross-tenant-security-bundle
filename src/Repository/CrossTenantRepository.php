@@ -121,6 +121,16 @@ trait CrossTenantRepository
         return $qb;
     }
 
+    public function find($id, $lockMode = null, $lockVersion = null)
+    {
+        // Locking requires EntityManager::find() — bypass filtering.
+        if ($lockMode !== null) {
+            return parent::find($id, $lockMode, $lockVersion);
+        }
+
+        return $this->findOneBy(['id' => $id]);
+    }
+
     public function findAll(): array
     {
         return $this->findBy([]);

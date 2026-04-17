@@ -254,6 +254,99 @@ class BundleIntegrationTest extends KernelTestCase
     }
 
     // -------------------------------------------------------------------------
+    // find() — must respect security filters (was previously unprotected)
+    // -------------------------------------------------------------------------
+
+    public function testFindByIdReturnsNullForUnauthenticatedUser(): void
+    {
+        $user = new User('alice@example.com');
+        $post = new Post('Secret post', $user);
+        $this->persist($user, $post);
+
+        $this->logout();
+
+        $found = $this->repo(Post::class)->find($post->getId());
+        $this->assertNull($found, 'Unauthenticated user must not be able to find() a post by ID');
+    }
+
+    public function testFindByIdReturnsNullForOtherUsersPost(): void
+    {
+        $alice = new User('alice@example.com');
+        $bob   = new User('bob@example.com');
+        $post  = new Post('Alice secret', $alice);
+        $this->persist($alice, $bob, $post);
+
+        $this->loginAs($bob);
+
+        $found = $this->repo(Post::class)->find($post->getId());
+        $this->assertNull($found, 'User must not be able to find() another user\'s post by ID');
+    }
+
+    public function testFindByIdReturnsOwnPost(): void
+    {
+        $alice = new User('alice@example.com');
+        $post  = new Post('My post', $alice);
+        $this->persist($alice, $post);
+
+        $this->loginAs($alice);
+
+        $found = $this->repo(Post::class)->find($post->getId());
+        $this->assertNotNull($found);
+        $this->assertSame('My post', $found->getTitle());
+    }
+
+    public function testSuperAdminCanFindAnyPostById(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $post  = new Post('Alice post', $alice);
+        $this->persist($alice, $admin, $post);
+
+        $this->loginAs($admin);
+
+        $found = $this->repo(Post::class)->find($post->getId());
+        $this->assertNotNull($found);
+        $this->assertSame('Alice post', $found->getTitle());
+    }
+
+    public function testFindByIdRespectsAdminOnlyAccess(): void
+    {
+        $user = new User('alice@example.com');
+        $log  = new AuditLog('secret.action');
+        $this->persist($user, $log);
+
+        $this->loginAs($user);
+
+        $found = $this->repo(AuditLog::class)->find($log->getId());
+        $this->assertNull($found, 'Regular user must not be able to find() an audit log by ID');
+    }
+
+    public function testSuperAdminCanFindAuditLogById(): void
+    {
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $log   = new AuditLog('system.event');
+        $this->persist($admin, $log);
+
+        $this->loginAs($admin);
+
+        $found = $this->repo(AuditLog::class)->find($log->getId());
+        $this->assertNotNull($found);
+        $this->assertSame('system.event', $found->getAction());
+    }
+
+    public function testFindByIdRespectsOpenAccess(): void
+    {
+        $tag = new Tag('php');
+        $this->persist($tag);
+
+        $this->logout();
+
+        $found = $this->repo(Tag::class)->find($tag->getId());
+        $this->assertNotNull($found, 'Open-access entity must be findable by ID even when unauthenticated');
+        $this->assertSame('php', $found->getName());
+    }
+
+    // -------------------------------------------------------------------------
     // Role hierarchy
     // -------------------------------------------------------------------------
 

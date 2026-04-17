@@ -121,7 +121,8 @@ trait CrossTenantRepository
         return $qb;
     }
 
-    public function find($id, $lockMode = null, $lockVersion = null)
+    #[\ReturnTypeWillChange]
+    public function find($id, $lockMode = null, $lockVersion = null): ?object
     {
         // Locking requires EntityManager::find() — bypass filtering.
         if ($lockMode !== null) {

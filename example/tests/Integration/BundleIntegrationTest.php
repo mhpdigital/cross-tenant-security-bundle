@@ -12,6 +12,8 @@ use App\Repository\TagRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
 
@@ -19,6 +21,7 @@ class BundleIntegrationTest extends KernelTestCase
 {
     private EntityManagerInterface $em;
     private TokenStorageInterface $tokenStorage;
+    private RequestStack $requestStack;
 
     protected function setUp(): void
     {
@@ -27,9 +30,15 @@ class BundleIntegrationTest extends KernelTestCase
         $container = static::getContainer();
         $this->em           = $container->get('doctrine.orm.entity_manager');
         $this->tokenStorage = $container->get('security.token_storage');
+        $this->requestStack = $container->get('request_stack');
 
         $this->recreateSchema();
         $this->tokenStorage->setToken(null);
+
+        // Default every test to a *web* context (a Request on the stack) so the security
+        // filtering behaves as it does for an HTTP request. Console-context tests opt out
+        // explicitly via enterConsoleContext().
+        $this->enterWebContext();
     }
 
     protected function tearDown(): void
@@ -60,6 +69,22 @@ class BundleIntegrationTest extends KernelTestCase
     private function logout(): void
     {
         $this->tokenStorage->setToken(null);
+    }
+
+    /** Simulate an HTTP request being handled (a Request on the stack). */
+    private function enterWebContext(): void
+    {
+        if ($this->requestStack->getCurrentRequest() === null) {
+            $this->requestStack->push(new Request());
+        }
+    }
+
+    /** Simulate a console command / queue worker / cron run (no Request on the stack). */
+    private function enterConsoleContext(): void
+    {
+        while ($this->requestStack->getCurrentRequest() !== null) {
+            $this->requestStack->pop();
+        }
     }
 
     private function persist(object ...$entities): void
@@ -372,5 +397,61 @@ class BundleIntegrationTest extends KernelTestCase
         // Super admin sees all tags (open access, same as everyone)
         $this->persist(new Tag('php'));
         $this->assertCount(1, $this->repo(Tag::class)->findAll());
+    }
+
+    // -------------------------------------------------------------------------
+    // Console / worker context — no HTTP request ⇒ trusted local process ⇒ full access
+    // -------------------------------------------------------------------------
+
+    public function testConsoleContextSeesAllPostsWithoutToken(): void
+    {
+        $alice = new User('alice@example.com');
+        $bob   = new User('bob@example.com');
+        $this->persist($alice, $bob, new Post('Alice post', $alice), new Post('Bob post', $bob));
+
+        $this->logout();
+        $this->enterConsoleContext();
+
+        $posts = $this->repo(Post::class)->findAll();
+        $this->assertCount(2, $posts, 'A console/worker run must see all rows through the secured builder.');
+    }
+
+    public function testConsoleContextSeesAllAuditLogsWithoutToken(): void
+    {
+        $this->persist(new AuditLog('user.login'), new AuditLog('payment.processed'));
+
+        $this->logout();
+        $this->enterConsoleContext();
+
+        $logs = $this->repo(AuditLog::class)->findAll();
+        $this->assertCount(2, $logs, 'Admin-only tables must be fully accessible from a console/worker run.');
+    }
+
+    public function testConsoleContextCanFindByIdWithoutToken(): void
+    {
+        $alice = new User('alice@example.com');
+        $post  = new Post('Alice post', $alice);
+        $this->persist($alice, $post);
+
+        $this->logout();
+        $this->enterConsoleContext();
+
+        $found = $this->repo(Post::class)->find($post->getId());
+        $this->assertNotNull($found, 'find() must resolve in a console/worker run despite having no token.');
+    }
+
+    public function testWebContextWithoutTokenStillSeesNothing(): void
+    {
+        // Guard: the console feature must NOT leak into a token-less *web* request.
+        $alice = new User('alice@example.com');
+        $this->persist($alice, new Post('Secret', $alice));
+
+        $this->logout();   // setUp already established a web context (Request on the stack)
+
+        $this->assertCount(
+            0,
+            $this->repo(Post::class)->findAll(),
+            'A token-less web request must remain fail-closed.',
+        );
     }
 }

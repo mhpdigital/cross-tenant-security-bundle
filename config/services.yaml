@@ -4,6 +4,7 @@ services:
             $doctrine: '@doctrine'
             $tokenStorage: '@security.token_storage'
             $roleHierarchy: '@security.role_hierarchy'
+            $requestStack: '@request_stack'
 
     Mhpdigital\CrossTenantSecurity\Request\CrossTenantEntityValueResolver:
         arguments:

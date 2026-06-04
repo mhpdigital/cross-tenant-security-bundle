@@ -4,6 +4,7 @@ namespace Mhpdigital\CrossTenantSecurity\Repository;
 
 use Doctrine\ORM\QueryBuilder;
 use Mhpdigital\CrossTenantSecurity\Security\CrossTenantUserInterface;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 use Symfony\Component\Security\Core\Role\RoleHierarchyInterface;
 
@@ -11,6 +12,7 @@ trait CrossTenantRepository
 {
     protected TokenStorageInterface $tokenStorage;
     protected RoleHierarchyInterface $roleHierarchy;
+    protected ?RequestStack $requestStack = null;
 
     /** @var string Prefix for all join aliases added by security filtering — override if it collides */
     protected string $securityAliasPrefix = 'sec';
@@ -25,6 +27,32 @@ trait CrossTenantRepository
     {
         $this->roleHierarchy = $roleHierarchy;
         return $this;
+    }
+
+    public function setRequestStack(?RequestStack $requestStack): static
+    {
+        $this->requestStack = $requestStack;
+        return $this;
+    }
+
+    /**
+     * True when there is no HTTP request in flight — i.e. a console command, a
+     * Messenger/queue worker, or a cron run. These are trusted local processes that
+     * legitimately need cross-tenant access (index builds, migrations, reports), and
+     * they carry no security token, so without this they would otherwise be filtered
+     * down to nothing.
+     *
+     * The discriminator is request-presence, NOT php_sapi: a functional test issues a
+     * real sub-request, so getCurrentRequest() is non-null there and web security rules
+     * still apply. If RequestStack was never injected (older service wiring), we assume
+     * a web context so behaviour fails closed rather than open.
+     *
+     * Role-specific decisions (which role counts as "super admin", per-tenant filtering)
+     * still belong in the implementing repository — this only models console vs web.
+     */
+    protected function isConsoleContext(): bool
+    {
+        return isset($this->requestStack) && $this->requestStack->getCurrentRequest() === null;
     }
 
     public function getTokenStorage(): TokenStorageInterface
@@ -78,9 +106,13 @@ trait CrossTenantRepository
     /**
      * Returns a QueryBuilder scoped to the current security context.
      *
-     * Unauthenticated requests receive a 1=0 WHERE clause and see no rows.
-     * All authenticated users pass through — apply your own tenant filtering
-     * by overriding this method in the implementing repository.
+     * Console commands, queue workers and cron runs (no HTTP request in flight —
+     * see {@see isConsoleContext()}) are trusted local processes and receive FULL
+     * access automatically — you no longer need createUnrestrictedQueryBuilder() for
+     * CLI/background work. Unauthenticated *web* requests still receive a 1=0 WHERE
+     * clause and see no rows. All authenticated users pass through — apply your own
+     * tenant filtering by overriding this method in the implementing repository
+     * (call isConsoleContext() yourself if your override should also bypass in CLI).
      *
      * Common multi-tenant SaaS pattern (these are examples — not enforced by this bundle):
      *
@@ -97,8 +129,10 @@ trait CrossTenantRepository
      *                         ->andWhere("{$p}_company = :{$p}_company")
      *                         ->setParameter("{$p}_company", $this->getCurrentUser()->getCompany());
      *   ROLE_SUPER_ADMIN → cross-tenant access; sees data across all companies
-     *                      (no WHERE needed — or use createUnrestrictedQueryBuilder()
-     *                      for CLI/background operations)
+     *                      (no WHERE needed). CLI/background runs are handled
+     *                      automatically via console-context detection; use
+     *                      createUnrestrictedQueryBuilder() only for an explicit,
+     *                      context-independent bypass.
      *
      * Note: ROLE_USER, ROLE_ADMIN, and ROLE_SUPER_ADMIN are well-established Symfony
      * conventions but carry no special framework-level meaning. This bundle does not
@@ -113,6 +147,13 @@ trait CrossTenantRepository
         $qb = $em->createQueryBuilder()
             ->select($alias)
             ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
+
+        // Console commands / queue workers / cron run as trusted local processes with no
+        // HTTP request and no token — grant full access (this is what callers previously
+        // had to spell out with createUnrestrictedQueryBuilder()).
+        if ($this->isConsoleContext()) {
+            return $qb;
+        }
 
         if ($this->getHighestRole() === '') {
             $qb->where('1=0');

@@ -6,6 +6,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\Repository\RepositoryFactory;
 use Doctrine\Persistence\ManagerRegistry;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 use Symfony\Component\Security\Core\Role\RoleHierarchyInterface;
 
@@ -17,6 +18,7 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
         protected ManagerRegistry $doctrine,
         protected TokenStorageInterface $tokenStorage,
         protected RoleHierarchyInterface $roleHierarchy,
+        protected ?RequestStack $requestStack = null,
     ) {}
 
     public function getRepository(EntityManagerInterface $entityManager, $entityName): EntityRepository
@@ -45,6 +47,10 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
 
         if (method_exists($repo, 'setRoleHierarchy')) {
             $repo->setRoleHierarchy($this->roleHierarchy);
+        }
+
+        if ($this->requestStack !== null && method_exists($repo, 'setRequestStack')) {
+            $repo->setRequestStack($this->requestStack);
         }
 
         return $repo;

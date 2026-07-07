@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1 — unreleased
+
+### Fixed
+- **`findBy()` now honours array criteria as `IN (...)`.** Passing an array value
+  (e.g. `findBy(['id' => [1, 2, 3]])`) previously rendered as `field = 1, 2, 3` and threw a
+  fatal SQL syntax error (500) — a call shape that is valid on stock Doctrine's
+  `ObjectRepository::findBy()`. An empty array now matches nothing (`1 = 0`) instead of
+  emitting broken SQL, mirroring Doctrine. `null` still renders as `IS NULL` and scalars as
+  `= :param`. `findOneBy()` is fixed automatically as it delegates to `findBy()`. Security
+  filters are still ANDed with the `IN`, so array criteria cannot leak cross-tenant rows.
+
 ## 1.1.0 — unreleased
 
 ### Added

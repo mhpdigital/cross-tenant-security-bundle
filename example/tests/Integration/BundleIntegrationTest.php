@@ -454,4 +454,232 @@ class BundleIntegrationTest extends KernelTestCase
             'A token-less web request must remain fail-closed.',
         );
     }
+
+    // -------------------------------------------------------------------------
+    // findBy() with array criteria — Doctrine's ObjectRepository::findBy()
+    // contract renders an array value as `field IN (...)`. The secured override
+    // must honour that (was: `field = a, b, c` → SQL syntax error 500) while
+    // still ANDing the repository's tenant/security filters.
+    // -------------------------------------------------------------------------
+
+    public function testFindByArrayCriteriaUsesInForSuperAdmin(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $p1 = new Post('P1', $alice);
+        $p2 = new Post('P2', $alice);
+        $p3 = new Post('P3', $alice);
+        $p4 = new Post('P4', $alice);
+        $this->persist($alice, $admin, $p1, $p2, $p3, $p4);
+
+        $this->loginAs($admin);
+
+        // Was: SQLSTATE[42000] syntax error near ', ...' (500).
+        $rows = $this->repo(Post::class)->findBy(['id' => [$p1->getId(), $p2->getId(), $p3->getId()]]);
+        $this->assertCount(3, $rows, 'Array criteria must render as IN (...), returning every matching row.');
+
+        // p4 was not in the IN list, so IN must actually filter (not just "any of these ids exist").
+        $titles = array_map(static fn (Post $p) => $p->getTitle(), $rows);
+        sort($titles);
+        $this->assertSame(['P1', 'P2', 'P3'], $titles);
+    }
+
+    public function testFindBySingleElementArrayCriteria(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $p1 = new Post('P1', $alice);
+        $p2 = new Post('P2', $alice);
+        $this->persist($alice, $admin, $p1, $p2);
+
+        $this->loginAs($admin);
+
+        $rows = $this->repo(Post::class)->findBy(['id' => [$p1->getId()]]);
+        $this->assertCount(1, $rows);
+        $this->assertSame('P1', $rows[0]->getTitle());
+    }
+
+    public function testFindByEmptyArrayCriteriaReturnsNoRowsWithoutCrashing(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $this->persist($alice, $admin, new Post('P1', $alice), new Post('P2', $alice));
+
+        $this->loginAs($admin);
+
+        // Empty array → matches nothing (mirrors Doctrine), must not crash and must
+        // NOT collapse to "no criteria" (which would leak every row to a super admin).
+        $this->assertSame([], $this->repo(Post::class)->findBy(['id' => []]));
+    }
+
+    public function testFindByEmptyArrayWithOtherCriteriaReturnsNothing(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $this->persist($alice, $admin, new Post('P1', $alice));
+
+        $this->loginAs($admin);
+
+        // The empty IN must dominate even when another criterion would match.
+        $this->assertSame([], $this->repo(Post::class)->findBy(['id' => [], 'title' => 'P1']));
+    }
+
+    public function testFindByArrayCriteriaStillEnforcesTenantFilter(): void
+    {
+        $alice = new User('alice@example.com');
+        $bob   = new User('bob@example.com');
+        $a1 = new Post('Alice 1', $alice);
+        $a2 = new Post('Alice 2', $alice);
+        $b1 = new Post('Bob 1', $bob);
+        $this->persist($alice, $bob, $a1, $a2, $b1);
+
+        $this->loginAs($alice);
+
+        // Alice asks for ids spanning both tenants; IN must be ANDed with her owner
+        // filter, so Bob's post must never leak through.
+        $rows = $this->repo(Post::class)->findBy(['id' => [$a1->getId(), $a2->getId(), $b1->getId()]]);
+        $this->assertCount(2, $rows);
+        foreach ($rows as $post) {
+            $this->assertSame('alice@example.com', $post->getAuthor()->getEmail());
+        }
+    }
+
+    public function testFindByArrayCriteriaReturnsEmptyWhenAllIdsBelongToAnotherTenant(): void
+    {
+        $alice = new User('alice@example.com');
+        $bob   = new User('bob@example.com');
+        $a1 = new Post('Alice 1', $alice);
+        $a2 = new Post('Alice 2', $alice);
+        $this->persist($alice, $bob, $a1, $a2);
+
+        $this->loginAs($bob);
+
+        $rows = $this->repo(Post::class)->findBy(['id' => [$a1->getId(), $a2->getId()]]);
+        $this->assertSame([], $rows, 'Requesting only another tenant\'s ids must return nothing.');
+    }
+
+    public function testFindByEmptyArrayCriteriaWithTenantFilter(): void
+    {
+        $alice = new User('alice@example.com');
+        $this->persist($alice, new Post('Alice 1', $alice));
+
+        $this->loginAs($alice);
+
+        // Empty IN alongside the injected owner andWhere must not crash.
+        $this->assertSame([], $this->repo(Post::class)->findBy(['id' => []]));
+    }
+
+    public function testFindByArrayCriteriaOnStringField(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $this->persist($alice, $admin, new Post('P1', $alice), new Post('P2', $alice), new Post('P3', $alice));
+
+        $this->loginAs($admin);
+
+        $rows = $this->repo(Post::class)->findBy(['title' => ['P1', 'P3']]);
+        $this->assertCount(2, $rows);
+    }
+
+    public function testFindByArrayCombinedWithScalarCriteria(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $p1 = new Post('P1', $alice);
+        $p2 = new Post('P2', $alice);
+        $p3 = new Post('P3', $alice);
+        $this->persist($alice, $admin, $p1, $p2, $p3);
+
+        $this->loginAs($admin);
+
+        // Array (IN) and scalar (=) criteria must compose with AND.
+        $rows = $this->repo(Post::class)->findBy([
+            'id'    => [$p1->getId(), $p2->getId(), $p3->getId()],
+            'title' => 'P2',
+        ]);
+        $this->assertCount(1, $rows);
+        $this->assertSame('P2', $rows[0]->getTitle());
+    }
+
+    public function testFindByScalarCriteriaStillUsesEquals(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $this->persist($alice, $admin, new Post('P1', $alice), new Post('P2', $alice));
+
+        $this->loginAs($admin);
+
+        $rows = $this->repo(Post::class)->findBy(['title' => 'P2']);
+        $this->assertCount(1, $rows);
+        $this->assertSame('P2', $rows[0]->getTitle());
+    }
+
+    public function testFindByNullCriteriaUsesIsNullAndDoesNotCrash(): void
+    {
+        $alice = new User('alice@example.com');
+        $admin = new User('admin@example.com', ['ROLE_SUPER_ADMIN']);
+        $this->persist($alice, $admin, new Post('P1', $alice));
+
+        $this->loginAs($admin);
+
+        // Regression guard: a null value must still render as IS NULL (never `= :param`).
+        // No Post has a null title, so this matches nothing — and must not throw.
+        $this->assertSame([], $this->repo(Post::class)->findBy(['title' => null]));
+    }
+
+    public function testFindOneByArrayCriteriaUsesIn(): void
+    {
+        $alice = new User('alice@example.com');
+        $p1 = new Post('P1', $alice);
+        $p2 = new Post('P2', $alice);
+        $this->persist($alice, $p1, $p2);
+
+        $this->loginAs($alice);
+
+        // findOneBy delegates to findBy, so it inherits IN handling.
+        $found = $this->repo(Post::class)->findOneBy(['id' => [$p1->getId(), $p2->getId()]]);
+        $this->assertNotNull($found);
+        $this->assertContains($found->getTitle(), ['P1', 'P2']);
+    }
+
+    public function testFindOneByEmptyArrayCriteriaReturnsNull(): void
+    {
+        $alice = new User('alice@example.com');
+        $this->persist($alice, new Post('P1', $alice));
+
+        $this->loginAs($alice);
+
+        $this->assertNull($this->repo(Post::class)->findOneBy(['id' => []]));
+    }
+
+    public function testFindByArrayCriteriaInConsoleContext(): void
+    {
+        $alice = new User('alice@example.com');
+        $bob   = new User('bob@example.com');
+        $a1 = new Post('Alice 1', $alice);
+        $b1 = new Post('Bob 1', $bob);
+        $this->persist($alice, $bob, $a1, $b1);
+
+        $this->logout();
+        $this->enterConsoleContext();
+
+        // Console context grants full access; array criteria still filters by IN.
+        $rows = $this->repo(Post::class)->findBy(['id' => [$a1->getId(), $b1->getId()]]);
+        $this->assertCount(2, $rows);
+    }
+
+    public function testFindByArrayCriteriaOnOpenAccessRepository(): void
+    {
+        $php     = new Tag('php');
+        $symfony = new Tag('symfony');
+        $doctrine = new Tag('doctrine');
+        $this->persist($php, $symfony, $doctrine);
+
+        $this->logout();
+
+        $rows = $this->repo(Tag::class)->findBy(['id' => [$php->getId(), $doctrine->getId()]]);
+        $this->assertCount(2, $rows);
+
+        $this->assertSame([], $this->repo(Tag::class)->findBy(['id' => []]));
+    }
 }

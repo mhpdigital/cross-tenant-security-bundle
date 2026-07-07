@@ -184,9 +184,16 @@ trait CrossTenantRepository
         $qb = $this->createQueryBuilder($alias);
 
         foreach ($criteria as $field => $value) {
-            $param = '_c_' . $field;
+            $param = '_c_' . str_replace('.', '_', $field);
             if ($value === null) {
                 $qb->andWhere("$alias.$field IS NULL");
+            } elseif (is_array($value)) {
+                if ($value === []) {
+                    // Empty IN matches nothing — mirror Doctrine rather than emit broken SQL.
+                    $qb->andWhere('1 = 0');
+                } else {
+                    $qb->andWhere("$alias.$field IN (:$param)")->setParameter($param, $value);
+                }
             } else {
                 $qb->andWhere("$alias.$field = :$param")->setParameter($param, $value);
             }

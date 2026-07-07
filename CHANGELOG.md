@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.1 — unreleased
+## 1.1.1 — 2026-07-07
 
 ### Fixed
 - **`findBy()` now honours array criteria as `IN (...)`.** Passing an array value

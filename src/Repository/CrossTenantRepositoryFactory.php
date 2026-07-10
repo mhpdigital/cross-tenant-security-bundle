@@ -2,6 +2,7 @@
 
 namespace Mhpdigital\CrossTenantSecurity\Repository;
 
+use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\Repository\RepositoryFactory;
@@ -39,7 +40,13 @@ class CrossTenantRepositoryFactory implements RepositoryFactory
         $repositoryClassName = $metadata->customRepositoryClassName
             ?: $entityManager->getConfiguration()->getDefaultRepositoryClassName();
 
-        $repo = new $repositoryClassName($this->doctrine, $entityName);
+        // ServiceEntityRepository (MakerBundle-generated custom repos) take
+        // (ManagerRegistry, entityClass); Doctrine's default EntityRepository —
+        // used for #[ORM\Entity] classes with no repositoryClass — takes
+        // (EntityManagerInterface, ClassMetadata). Build whichever this class needs.
+        $repo = is_a($repositoryClassName, ServiceEntityRepository::class, true)
+            ? new $repositoryClassName($this->doctrine, $entityName)
+            : new $repositoryClassName($entityManager, $metadata);
 
         if (method_exists($repo, 'setTokenStorage')) {
             $repo->setTokenStorage($this->tokenStorage);

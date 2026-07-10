@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.2 — 2026-07-11
+
+### Fixed
+- **The repository factory now builds both repository constructor shapes.** The factory
+  hard-coded the `ServiceEntityRepository(ManagerRegistry, entityClass)` signature used by
+  MakerBundle-generated custom repos, so any `#[ORM\Entity]` with **no** `repositoryClass`
+  (which gets Doctrine's default `EntityRepository(EntityManagerInterface, ClassMetadata)`)
+  threw `TypeError: EntityRepository::__construct(): Argument #1 ($em) must be of type
+  EntityManagerInterface, …Registry given`. This regressed in be5a121, which flipped an
+  earlier version that supported only repo-less entities — the factory only ever supported
+  one shape at a time. It now detects `is_a($class, ServiceEntityRepository::class)` and
+  constructs whichever the repository class needs, so `getRepository()` and `#[MapEntity]`
+  (find-by-PK) work for both. No security impact: `#[MapEntity]` resolves via `find()`,
+  which is by primary key and never went through `createQueryBuilder()` role-filtering.
+
 ## 1.1.1 — 2026-07-07
 
 ### Fixed

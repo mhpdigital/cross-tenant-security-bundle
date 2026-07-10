@@ -5,11 +5,13 @@ namespace App\Tests\Integration;
 use App\Entity\AuditLog;
 use App\Entity\Post;
 use App\Entity\Tag;
+use App\Entity\TopicPage;
 use App\Entity\User;
 use App\Repository\AuditLogRepository;
 use App\Repository\PostRepository;
 use App\Repository\TagRepository;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\HttpFoundation\Request;
@@ -681,5 +683,42 @@ class BundleIntegrationTest extends KernelTestCase
         $this->assertCount(2, $rows);
 
         $this->assertSame([], $this->repo(Tag::class)->findBy(['id' => []]));
+    }
+
+    // -------------------------------------------------------------------------
+    // Repo-less entity — Doctrine's default EntityRepository. The factory must
+    // build BOTH constructor shapes: ServiceEntityRepository(ManagerRegistry,
+    // entityClass) for MakerBundle repos AND EntityRepository(EntityManager,
+    // ClassMetadata) for #[ORM\Entity] classes with no repositoryClass.
+    // Regression guard for be5a121, which hard-coded the former and made the
+    // latter throw a TypeError (e.g. MapEntity find-by-PK on such an entity).
+    // -------------------------------------------------------------------------
+
+    public function testFactoryBuildsDefaultEntityRepositoryForRepoLessEntity(): void
+    {
+        // Previously threw:
+        //   TypeError: EntityRepository::__construct(): Argument #1
+        //   ($em) must be of type EntityManagerInterface, ManagerRegistry given
+        $repo = $this->repo(TopicPage::class);
+        $this->assertInstanceOf(EntityRepository::class, $repo);
+    }
+
+    public function testRepoLessEntityIsQueryableByFindAll(): void
+    {
+        $this->persist(new TopicPage('About'), new TopicPage('Contact'));
+
+        $pages = $this->repo(TopicPage::class)->findAll();
+        $this->assertCount(2, $pages);
+    }
+
+    public function testRepoLessEntityIsFindableByPrimaryKey(): void
+    {
+        $page = new TopicPage('About');
+        $this->persist($page);
+
+        // The find()-by-PK path MapEntity relies on must resolve.
+        $found = $this->repo(TopicPage::class)->find($page->getId());
+        $this->assertNotNull($found);
+        $this->assertSame('About', $found->getTitle());
     }
 }

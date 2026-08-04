@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Planned
+- **Make `AdminOnlyAccessRepository` check the role hierarchy rather than an exact string.**
+  It currently gates on `getHighestRole() !== 'ROLE_SUPER_ADMIN'`, comparing against the single
+  highest-scoring role. A user who also holds a custom role that reaches more roles than
+  `ROLE_SUPER_ADMIN` would have that role selected as "highest" and be denied despite being a
+  super admin. This fails **closed**, so it is not a data leak — but it is surprising, and the
+  fix is to test whether the token's reachable roles contain the admin role instead of matching
+  one string. Likely paired with making the admin role name configurable rather than hard-coded.
+
+## 1.1.3 — 2026-08-04
+
+### Documentation
+- **Clarified what the access matrix actually claims for `OpenAccessRepository`.** The
+  "token-less web" cell read **all rows (public)**, which asserted something the bundle does
+  not control. The trait's `createQueryBuilder()` never reads the token and emits no `WHERE` —
+  that is a statement about *filtering*, not about *exposure*. Whether the data is reachable
+  without logging in is decided by the firewall and `access_control` on the routes that expose
+  it, and this bundle has no route layer.
+- Documented the asymmetry that makes the choice of trait matter: `CrossTenantRepository` and
+  `AdminOnlyAccessRepository` apply `1=0` in the repository, so a route accidentally left
+  unprotected still returns nothing; `OpenAccessRepository` has **no repository-level
+  backstop**, so the route's own protection is the only gate. Use `CrossTenantRepository` when
+  login must be enforced regardless of how the routes are configured.
+- The `OpenAccessRepository` docblock was rewritten to match the README, so the two cannot
+  drift apart.
+
+No behaviour change — documentation and comments only. All 43 example integration tests pass
+unchanged.
+
 ## 1.1.2 — 2026-07-11
 
 ### Fixed
@@ -26,7 +57,7 @@
   `= :param`. `findOneBy()` is fixed automatically as it delegates to `findBy()`. Security
   filters are still ANDed with the `IN`, so array criteria cannot leak cross-tenant rows.
 
-## 1.1.0 — unreleased
+## 1.1.0 — 2026-06-05
 
 ### Added
 - **Console-context auto-detection.** Repositories using `CrossTenantRepository` or

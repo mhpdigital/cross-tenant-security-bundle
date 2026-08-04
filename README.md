@@ -31,11 +31,28 @@ that uses one of the traits.
 |-------|------------------|-------------------|----------------|
 | `CrossTenantRepository` | **all rows** | your tenant filter (override) | **none** (`1=0`) |
 | `AdminOnlyAccessRepository` | **all rows** | `ROLE_SUPER_ADMIN` → all, else none | **none** |
-| `OpenAccessRepository` | all rows | all rows | **all rows** (public) |
+| `OpenAccessRepository` | all rows | all rows | **all rows** — no repository-level gate |
 
 "console / worker" = any process with no HTTP request in flight (a console command, a
 Messenger/queue worker, a cron run). These are trusted local processes and get full access
 automatically — see [Console context](#console--worker-context).
+
+### What the matrix does and does not say
+
+It describes the **repository** layer only: which rows a query returns in a given context. It
+says nothing about *who can reach the code that runs the query* — that is your firewall and
+`access_control`, which this bundle does not touch. The practical difference between the traits
+is therefore where the backstop sits:
+
+- `CrossTenantRepository` and `AdminOnlyAccessRepository` filter in the repository, so a route
+  you accidentally leave unprotected still returns nothing to a token-less request.
+- `OpenAccessRepository` applies no filter at all, so **the route's own protection is the only
+  gate**. Behind a login-required route it means "all rows to every logged-in user"; on a route
+  reachable without authentication it means "all rows to anyone".
+
+So "token-less web → all rows" means *this trait will not stop such a request* — not that the
+data is necessarily exposed. Choose `OpenAccessRepository` when you are content for the
+repository to add no protection of its own.
 
 ## Examples
 
@@ -70,10 +87,11 @@ class PostRepository extends ServiceEntityRepository
 }
 ```
 
-### 2. Public lookup — `OpenAccessRepository`
+### 2. Unfiltered lookup — `OpenAccessRepository`
 
-Genuinely public reference data — **everyone, including unauthenticated requests**, sees all
-rows. Use for `sex`, `country`, `currency`, `status`, `category`, `tag`. No override needed.
+Reference data the repository does not gate at all: **every request that reaches it sees all
+rows**, authenticated or not. Typical for `sex`, `country`, `currency`, `status`, `category`,
+`tag`. No override needed.
 
 ```php
 use Mhpdigital\CrossTenantSecurity\Repository\OpenAccessRepository;
@@ -84,8 +102,10 @@ class SexRepository extends ServiceEntityRepository
 }
 ```
 
-> If a lookup must require login, do **not** use this trait — use `CrossTenantRepository`
-> (authenticated → all rows, token-less web → none).
+> Because the trait adds no filter, whether this data is truly *public* is decided entirely by
+> the routes that expose it. If the lookup must require login **regardless of how its routes are
+> configured**, do not use this trait — use `CrossTenantRepository` (authenticated → all rows,
+> token-less web → none), which enforces that at the repository.
 
 ### 3. Admin-only — `AdminOnlyAccessRepository`
 

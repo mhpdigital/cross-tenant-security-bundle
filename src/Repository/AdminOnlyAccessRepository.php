@@ -12,21 +12,16 @@ trait AdminOnlyAccessRepository
 {
     use CrossTenantRepository;
 
-    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+    /**
+     * Only ROLE_SUPER_ADMIN sees rows on the web; everyone else gets an empty set.
+     *
+     * Console / worker / cron never reaches this — CrossTenantRepository grants those
+     * full access first, so a CLI job over admin-only tables does not come back empty.
+     */
+    protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
     {
-        $em = $this->getEntityManager();
-        $qb = $em->createQueryBuilder()
-            ->select($alias)
-            ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
-
-        // Console / worker / cron is a trusted local process — full access, same as
-        // CrossTenantRepository (a CLI job over admin-only tables must not come back empty).
-        if ($this->isConsoleContext()) {
-            return $qb;
-        }
-
         if ($this->getHighestRole() !== 'ROLE_SUPER_ADMIN') {
-            $qb->where('1=0');
+            $qb->andWhere('1=0');
         }
 
         return $qb;

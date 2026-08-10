@@ -23,12 +23,12 @@ trait OpenAccessRepository
 {
     use CrossTenantRepository;
 
-    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+    /**
+     * No gate: every request that reaches this repository sees all rows. The token is
+     * never read, so authenticated and unauthenticated callers are treated alike.
+     */
+    protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
     {
-        $em = $this->getEntityManager();
-
-        return $em->createQueryBuilder()
-            ->select($alias)
-            ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
+        return $qb;
     }
 }

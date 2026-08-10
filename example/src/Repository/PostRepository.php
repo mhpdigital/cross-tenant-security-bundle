@@ -12,23 +12,24 @@ use Mhpdigital\CrossTenantSecurity\Repository\CrossTenantRepository;
  * Tenant-scoped: each user sees only their own posts.
  * ROLE_SUPER_ADMIN sees all posts.
  *
- * The base CrossTenantRepository blocks unauthenticated requests (1=0).
- * This override adds the per-user filter for authenticated non-super-admins.
+ * Only the access gate lives here. The base builder and the console/worker bypass
+ * are owned by CrossTenantRepository::createQueryBuilder(), which is final.
  */
 class PostRepository extends ServiceEntityRepository
 {
-    use CrossTenantRepository {
-        CrossTenantRepository::createQueryBuilder as secureQueryBuilder;
-    }
+    use CrossTenantRepository;
 
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, Post::class);
     }
 
-    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+    protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
     {
-        $qb = $this->secureQueryBuilder($alias, $indexBy);
+        // Unauthenticated web request — no rows.
+        if ($this->getHighestRole() === '') {
+            return $qb->andWhere('1=0');
+        }
 
         // Super admin sees everything; regular users see only their own posts.
         if ($this->getCurrentUser() !== null && $this->getHighestRole() !== 'ROLE_SUPER_ADMIN') {

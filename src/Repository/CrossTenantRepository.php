@@ -106,13 +106,22 @@ trait CrossTenantRepository
     /**
      * Returns a QueryBuilder scoped to the current security context.
      *
+     * This method is FINAL and owns the two things every repository must get right:
+     * the base builder, and the console-context guarantee. Repositories contribute
+     * their filtering through two hooks instead of re-implementing this method:
+     *
+     *   {@see applyContentFilter()}  — optional. Applied in EVERY context, console
+     *                                  included. For always-on row filters such as
+     *                                  soft-delete, which must never be bypassed.
+     *   {@see applyTenantScope()}    — required. Applied ONLY in a web context. This
+     *                                  is the access gate; console/worker/cron skips it.
+     *
      * Console commands, queue workers and cron runs (no HTTP request in flight —
      * see {@see isConsoleContext()}) are trusted local processes and receive FULL
      * access automatically — you no longer need createUnrestrictedQueryBuilder() for
-     * CLI/background work. Unauthenticated *web* requests still receive a 1=0 WHERE
-     * clause and see no rows. All authenticated users pass through — apply your own
-     * tenant filtering by overriding this method in the implementing repository
-     * (call isConsoleContext() yourself if your override should also bypass in CLI).
+     * CLI/background work. Because the bypass lives here rather than in each
+     * repository, it cannot be forgotten: a repository that omitted it used to
+     * collapse to getHighestRole()==='' → 1=0 → zero rows in every CLI job.
      *
      * Common multi-tenant SaaS pattern (these are examples — not enforced by this bundle):
      *
@@ -136,29 +145,52 @@ trait CrossTenantRepository
      *
      * Note: ROLE_USER, ROLE_ADMIN, and ROLE_SUPER_ADMIN are well-established Symfony
      * conventions but carry no special framework-level meaning. This bundle does not
-     * check for any specific role name — all filtering logic belongs in your repository override.
+     * check for any specific role name — all filtering logic belongs in your hook.
      *
      * The 'sec' alias prefix is defined in $securityAliasPrefix and can be overridden
      * per-repository if it collides with an alias your query already uses.
      */
-    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+    final public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
     {
-        $em = $this->getEntityManager();
-        $qb = $em->createQueryBuilder()
-            ->select($alias)
-            ->from($em->getClassMetadata($this->getEntityName())->getName(), $alias, $indexBy);
+        $qb = $this->applyContentFilter(parent::createQueryBuilder($alias, $indexBy), $alias);
 
         // Console commands / queue workers / cron run as trusted local processes with no
         // HTTP request and no token — grant full access (this is what callers previously
-        // had to spell out with createUnrestrictedQueryBuilder()).
+        // had to spell out with createUnrestrictedQueryBuilder()). Handled ONCE here so
+        // that no repository can forget it.
         if ($this->isConsoleContext()) {
             return $qb;
         }
 
-        if ($this->getHighestRole() === '') {
-            $qb->where('1=0');
-        }
+        return $this->applyTenantScope($qb, $alias);
+    }
 
+    /**
+     * Add this repository's access gate. Runs ONLY in an HTTP-request context —
+     * console/worker/cron access is already granted before this is reached, so you
+     * never handle it here, and you never call isConsoleContext() yourself.
+     *
+     * Abstract on purpose: every cross-tenant repository must state its scope. A
+     * default implementation would silently leave a repository unfiltered on the web.
+     *
+     * Return $qb unchanged for "this role sees everything"; add a 1=0 clause to deny.
+     * A null user id must deny explicitly — do NOT collapse it to `owner = NULL`,
+     * which is never true in SQL and hides the intent.
+     */
+    abstract protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder;
+
+    /**
+     * Add an always-on row filter — applied in EVERY context, console included.
+     *
+     * This is for content rules that are not about *who is asking*: soft-delete,
+     * unpublished drafts, archived rows. They must survive the console bypass, so
+     * they cannot live in {@see applyTenantScope()} — a CLI index build would
+     * otherwise pick up rows the application considers deleted.
+     *
+     * Optional: the default applies no filter.
+     */
+    protected function applyContentFilter(QueryBuilder $qb, string $alias): QueryBuilder
+    {
         return $qb;
     }
 

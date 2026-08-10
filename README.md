@@ -7,6 +7,10 @@ automatically in `createQueryBuilder()` (and `find()`, `findBy()`, `findOneBy()`
 so controllers and services never pass the current user around — the security context is read
 from the token.
 
+`createQueryBuilder()` is **final**: it owns the base builder and the console/worker bypass, and
+calls into two hooks your repository implements. You never re-implement it, so the bypass cannot
+be forgotten. See [Writing a repository](#writing-a-repository).
+
 ## Install & register
 
 ```bash
@@ -29,7 +33,7 @@ that uses one of the traits.
 
 | Trait | console / worker | authenticated web | token-less web |
 |-------|------------------|-------------------|----------------|
-| `CrossTenantRepository` | **all rows** | your tenant filter (override) | **none** (`1=0`) |
+| `CrossTenantRepository` | **all rows** | your `applyTenantScope()` hook | whatever your hook returns for role `''` (deny with `1=0`) |
 | `AdminOnlyAccessRepository` | **all rows** | `ROLE_SUPER_ADMIN` → all, else none | **none** |
 | `OpenAccessRepository` | all rows | all rows | **all rows** — no repository-level gate |
 
@@ -54,29 +58,49 @@ So "token-less web → all rows" means *this trait will not stop such a request*
 data is necessarily exposed. Choose `OpenAccessRepository` when you are content for the
 repository to add no protection of its own.
 
+## Writing a repository
+
+`createQueryBuilder()` is final and runs this sequence:
+
+```
+parent::createQueryBuilder()      the plain Doctrine builder
+  → applyContentFilter()          optional. EVERY context, console included
+  → if (isConsoleContext()) return   trusted local process — gate skipped
+  → applyTenantScope()            required. Web only. This is the access gate
+```
+
+Two hooks, with a deliberate split:
+
+| Hook | Required | Runs in console? | For |
+|------|----------|------------------|-----|
+| `applyTenantScope(QueryBuilder $qb, string $alias)` | **yes** (abstract) | no | who may see which rows |
+| `applyContentFilter(QueryBuilder $qb, string $alias)` | no | **yes** | rules that hold regardless of caller — soft-delete, drafts |
+
+`applyTenantScope()` is abstract on purpose: a repository that forgets to declare its scope
+fails to compile rather than silently serving unfiltered rows on the web.
+
 ## Examples
 
 ### 1. Tenant-scoped — `CrossTenantRepository`
 
-Each user sees only their own rows; `ROLE_SUPER_ADMIN` sees all. Use the **trait-alias pattern**:
-call the library's secured builder first (you inherit the unauthenticated `1=0` *and* the
-console-context bypass), then add your own filter.
+Each user sees only their own rows; `ROLE_SUPER_ADMIN` sees all. Implement the gate only — the
+base builder and the console bypass are already applied before your hook is called.
 
 ```php
 use Mhpdigital\CrossTenantSecurity\Repository\CrossTenantRepository;
 
 class PostRepository extends ServiceEntityRepository
 {
-    use CrossTenantRepository {
-        CrossTenantRepository::createQueryBuilder as secureQueryBuilder;
-    }
+    use CrossTenantRepository;
 
-    public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+    protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
     {
-        $qb = $this->secureQueryBuilder($alias, $indexBy);
+        // Unauthenticated web request — no rows.
+        if ($this->getHighestRole() === '') {
+            return $qb->andWhere('1=0');
+        }
 
         // Authenticated non-super-admins are scoped to their own rows.
-        // (No current user ⇒ console context ⇒ full access, so this is skipped.)
         if ($this->getCurrentUser() !== null && $this->getHighestRole() !== 'ROLE_SUPER_ADMIN') {
             $qb->andWhere("$alias.author = :_author")
                ->setParameter('_author', $this->getUserId());
@@ -120,25 +144,23 @@ class AuditLogRepository extends ServiceEntityRepository
 }
 ```
 
-### 4. Content filter + access gate (custom `createQueryBuilder`)
+### 4. Content filter + access gate — both hooks
 
 When a repository has an **always-on content filter** (e.g. hide soft-deleted or unpublished
-rows) *as well as* an access gate, reimplement `createQueryBuilder()` and place
-`isConsoleContext()` **between** them — the content filter must apply in every context, but the
-access gate is bypassed for console/worker:
+rows) *as well as* an access gate, put them in different hooks. The bundle runs the content
+filter before the console bypass and the gate after, so the content rule holds everywhere while
+the gate is skipped for trusted local processes:
 
 ```php
-public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+// (1) ALWAYS applies — including console/worker/cron.
+protected function applyContentFilter(QueryBuilder $qb, string $alias): QueryBuilder
 {
-    $qb = $em->createQueryBuilder()->select($alias)->from(/* … */);
+    return $qb->andWhere("$alias.deleted IS NULL");
+}
 
-    $qb->andWhere("$alias.deleted IS NULL");   // (1) content filter — ALWAYS applies
-
-    if ($this->isConsoleContext()) {           // CLI/worker bypasses ONLY the gate below
-        return $qb;
-    }
-
-    // (2) access gate — bypassed in console
+// (2) access gate — never reached in console context.
+protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
+{
     if (!\in_array($this->getHighestRole(), self::READER_ROLES, true)) {
         $qb->andWhere('1=0');
     }
@@ -147,8 +169,10 @@ public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
 }
 ```
 
-A console index build then sees all **non-deleted** rows without
-`createUnrestrictedQueryBuilder()`, while deleted rows stay hidden everywhere.
+A CLI index build then sees all **non-deleted** rows without
+`createUnrestrictedQueryBuilder()`, while deleted rows stay hidden everywhere. Putting the
+soft-delete clause in `applyTenantScope()` instead would leak deleted rows into every console
+job — that is the mistake the split exists to prevent.
 
 ## Console / worker context
 
@@ -157,6 +181,14 @@ security token. The bundle detects this (`isConsoleContext()` — request-presen
 tests that issue a sub-request keep full web semantics) and grants **full access** through the
 secured `createQueryBuilder()`. CLI/background code no longer needs
 `createUnrestrictedQueryBuilder()`.
+
+Since 2.0.0 this check lives in the final `createQueryBuilder()` rather than in each repository,
+so it is applied uniformly and cannot be omitted. Do **not** re-test it inside
+`applyTenantScope()` — that hook only ever runs in a web context.
+
+Note the discriminator is request-presence, not `php_sapi_name()`. A repository that gates on
+`php_sapi_name() === 'cli'` is unfiltered for the whole of a PHPUnit run, which hides real
+access-control failures from your test suite.
 
 If `request_stack` is not wired, the bundle assumes a web context and fails **closed**.
 

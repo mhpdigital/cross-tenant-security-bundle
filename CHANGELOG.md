@@ -1,5 +1,83 @@
 # Changelog
 
+## 2.0.0 — 2026-08-10
+
+### Changed — BREAKING
+
+- **`createQueryBuilder()` is now `final`; repositories implement hooks instead.** A repository
+  declares its access gate in `applyTenantScope(QueryBuilder $qb, string $alias)` and,
+  optionally, an always-on row filter in `applyContentFilter(QueryBuilder $qb, string $alias)`.
+  The trait owns the sequence:
+
+  ```
+  parent::createQueryBuilder()  →  applyContentFilter()  →  console bypass  →  applyTenantScope()
+  ```
+
+  `applyTenantScope()` is **abstract**, so a repository that fails to declare its scope does not
+  compile. That is deliberate: a defaulted no-op would leave web queries unfiltered, and a
+  defaulted deny-all would fail invisibly.
+
+### Why
+
+Overriding the whole of `createQueryBuilder()` made two mistakes easy, and both were found in
+the wild:
+
+1. **The console bypass was forgettable.** The trait's default granted full access when no HTTP
+   request was in flight (console command, queue worker, cron). An override *replaced* that, so
+   unless the author re-added it, a token-less read collapsed to `getHighestRole() === ''` →
+   `getUserId() === null` → `andWhere('1 = 0')` → **zero rows**. In the DermNet codebase 20 of
+   21 overriding repositories had lost it. The bypass now lives in one place repositories
+   cannot replace.
+
+2. **Everyone re-implemented the base builder.** Each override hand-copied
+   `$em->createQueryBuilder()->select($alias)->from(...)`, a verbatim restatement of
+   `parent::createQueryBuilder()`. The hook receives the built `$qb`, so that boilerplate is gone.
+
+The `applyContentFilter()` split exists because the two kinds of filtering have genuinely
+different scope. A soft-delete rule must hold in **every** context; an access gate must not
+apply to trusted local processes. Collapsing both into one hook would either leak deleted rows
+into console jobs or re-break the console bypass.
+
+### Upgrading from 1.x
+
+Per repository, mechanically:
+
+```php
+// before
+public function createQueryBuilder($alias, $indexBy = null): QueryBuilder
+{
+    $em = $this->getEntityManager();
+    $qb = $em->createQueryBuilder()->select($alias)->from(/* … */);   // ← delete
+    if ($this->isConsoleContext()) { return $qb; }                    // ← delete
+    /* your switch / filter */
+    return $qb;
+}
+
+// after
+protected function applyTenantScope(QueryBuilder $qb, string $alias): QueryBuilder
+{
+    /* your switch / filter, unchanged */
+    return $qb;
+}
+```
+
+- Drop the base-builder preamble and any `isConsoleContext()` branch — the trait does both.
+- Keep your role logic verbatim, including an explicit `andWhere('1=0')` for a null user id.
+- Move any always-on filter (soft-delete, unpublished) to `applyContentFilter()`, **not**
+  `applyTenantScope()`, or console jobs will start seeing those rows.
+- Using the 1.x trait-alias pattern (`CrossTenantRepository::createQueryBuilder as
+  secureQueryBuilder`)? Delete the alias and move the body into `applyTenantScope()`; the
+  unauthenticated `1=0` the aliased builder used to add is now yours to state explicitly.
+- Repositories gating on `php_sapi_name() === 'cli'` should simply drop that branch. It is not
+  equivalent to `isConsoleContext()`: it is true for an entire PHPUnit run, so those
+  repositories were unfiltered throughout the test suite and their gates were never exercised.
+  Expect previously-green tests to start enforcing access — in DermNet this surfaced a live bug
+  where anonymous email verification could never load its user.
+- `AdminOnlyAccessRepository` and `OpenAccessRepository` users need no changes; both traits
+  implement the hook themselves.
+
+All 43 example integration tests pass unchanged.
+
 ## Unreleased
 
 ### Planned

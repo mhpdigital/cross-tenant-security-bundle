@@ -202,7 +202,13 @@ trait CrossTenantRepository
             return parent::find($id, $lockMode, $lockVersion);
         }
 
-        return $this->findOneBy(['id' => $id]);
+        // Look the key up from the mapping — it is not always called "id". A composite
+        // key arrives as [field => value], which is already findOneBy() criteria.
+        if (!is_array($id)) {
+            $id = [$this->getClassMetadata()->getSingleIdentifierFieldName() => $id];
+        }
+
+        return $this->findOneBy($id);
     }
 
     public function findAll(): array

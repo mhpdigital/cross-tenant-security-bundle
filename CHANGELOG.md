@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.1.0 — 2026-09-21
+
+### Fixed
+- **Entity controller arguments now behave exactly as Symfony documents them.** The bundle
+  shipped its own `CrossTenantEntityValueResolver` at priority 115, ahead of Symfony's
+  `EntityValueResolver`. It claimed every plain entity type-hint on a route carrying `{id}`,
+  and got three things wrong:
+  - **Two entity arguments both loaded from `{id}`.** On `/posts/{id}/tags/{tag}` with
+    `Post $post, Tag $tag`, the tag was fetched with the *post's* id — the wrong row, silently.
+  - **A nullable argument threw 404** instead of resolving to `null`.
+  - **`#[MapEntity(disabled: true)]` was ignored** — the entity was resolved anyway.
+
+  The resolver is removed. It was also unnecessary: Symfony's resolver loads through
+  `$repository->find()` / `findOneBy()`, which the trait already routes through the secured
+  `createQueryBuilder()`. Type-hints, `#[MapEntity(id: …)]`, `#[MapEntity(mapping: …)]` and
+  `{slug}`-style routes are all tenant-scoped and 404 on an invisible row — see the new README
+  section and `EntityArgumentResolutionTest`.
+- **`find()` works on a primary key that is not called `id`.** It hard-coded
+  `findOneBy(['id' => $id])`, so find-by-PK — and therefore `#[MapEntity]` — threw
+  `Class … has no field or association named id` on natural-key entities. It now reads the
+  identifier from the class metadata, and accepts a composite key as `[field => value]`.
+
+### Removed
+- `Mhpdigital\CrossTenantSecurity\Request\CrossTenantEntityValueResolver` and its service
+  definition. Nothing needs to replace it. If your own `services.yaml` references the class,
+  delete that entry.
+
+### Corrected
+- The 1.1.2 entry below said `#[MapEntity]` "resolves via `find()` … and never went through
+  `createQueryBuilder()` role-filtering". That was wrong: `find()` has delegated to the secured
+  `findOneBy()` since 1.0.2 (4abfc03), so `#[MapEntity]` lookups are and were tenant-scoped.
+
+55 example integration tests pass (43 existing, 12 new).
+
 ## 2.0.0 — 2026-08-10
 
 ### Changed — BREAKING

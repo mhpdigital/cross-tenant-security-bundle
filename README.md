@@ -174,6 +174,40 @@ A CLI index build then sees all **non-deleted** rows without
 soft-delete clause in `applyTenantScope()` instead would leak deleted rows into every console
 job — that is the mistake the split exists to prevent.
 
+## Entity arguments in controllers — `#[MapEntity]` and type-hints
+
+Use Symfony's own entity resolution. There is nothing to register and nothing to avoid:
+
+```php
+#[Route('/posts/{id}')]
+public function show(Post $post): Response { … }
+
+#[Route('/courses/{slug}')]
+public function course(#[MapEntity(mapping: ['slug' => 'slug'])] Course $course): Response { … }
+
+#[Route('/posts/{id}/comments/{comment_id}')]
+public function comment(Post $post, #[MapEntity(id: 'comment_id')] Comment $comment): Response { … }
+```
+
+Symfony's `EntityValueResolver` loads through `$repository->find()` and
+`$repository->findOneBy()`. The trait overrides both to run through the secured
+`createQueryBuilder()`, so every shape above is tenant-scoped, and a row the caller cannot see
+is a **404** — the same response as a row that does not exist, so existence never leaks.
+Nullable arguments resolve to `null`; `#[MapEntity(disabled: true)]` is honoured.
+
+Two things stay your responsibility:
+
+- **`#[MapEntity(expr: '…')]`** calls whichever repository method the expression names. It is
+  scoped exactly when that method builds its query with `createQueryBuilder()` — which is true
+  of `find()`, `findBy()`, `findOneBy()`, `findAll()` and of any custom method written the
+  normal way — and unscoped if the method uses `createUnrestrictedQueryBuilder()`, raw DQL from
+  the entity manager, or native SQL.
+- **`find($id, $lockMode)` with a lock mode** goes to `EntityManager::find()` and is not
+  filtered. Entity arguments never pass a lock mode; this only matters for your own calls.
+
+`example/tests/Integration/EntityArgumentResolutionTest.php` runs each shape through the real
+argument-resolver chain.
+
 ## Console / worker context
 
 A console command, Messenger/queue worker or cron run has **no HTTP request** and carries no
